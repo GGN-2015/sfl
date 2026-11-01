@@ -161,15 +161,18 @@ class Interpreter:
             return self.binary(fields["op"], left, right, node, context)
         if kind == "DICT_UPDATE":
             result = self.evaluate(fields["base"], context)
-            if not isinstance(result, Dictionary):
-                self.fail("TYPE_ERROR", "Dictionary updates require a dictionary; strings are immutable", node, context)
+            if not isinstance(result, (Dictionary, bytes)):
+                self.fail("TYPE_ERROR", "Updates require a dictionary or byte string", node, context)
             for entry in fields["entries"]:
                 key = self.evaluate(entry.fields["key"], context)
                 value = self.evaluate(entry.fields["value"], context)
-                try:
-                    result = result.with_item(key, value)
-                except ValueError as error:
-                    self.fail("INVALID_KEY", str(error), entry, context)
+                if isinstance(result, bytes):
+                    result = self.update_string(result, key, value, entry, context)
+                else:
+                    try:
+                        result = result.with_item(key, value)
+                    except ValueError as error:
+                        self.fail("INVALID_KEY", str(error), entry, context)
             return result
         if kind in {"INDEX", "MEMBER"}:
             base = self.evaluate(fields["base"], context)
@@ -271,6 +274,19 @@ class Interpreter:
             context.exports = context.exports.with_item(alias, value)
             return None
         self.fail("INVALID_AST", f"Cannot execute node {kind}", node, context)
+
+    def update_string(self, base: bytes, key, value, node: Node, context: Context) -> bytes:
+        if type(key) is not int:
+            self.fail("INVALID_KEY", "Byte-string update indices must be integers", node, context)
+        if value is not None and (type(value) is not int or not 0 <= value <= 255):
+            self.fail("INVALID_BYTE", "Byte-string update values must be integers from 0 through 255 or null", node, context)
+        if key < 0 or (value is not None and key > len(base)):
+            self.fail("INDEX_OUT_OF_RANGE", "Byte-string updates require a non-negative index and cannot create gaps", node, context)
+        if value is None:
+            if key >= len(base):
+                return base
+            return base[:key] + base[key + 1:]
+        return base[:key] + bytes((value,)) + base[key + 1:]
 
     def environment(self, value, node, context):
         if not isinstance(value, Dictionary):

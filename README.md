@@ -55,7 +55,7 @@ io.print(factorial(6))
 export factorial
 ```
 
-The bundled `stdio` library is written in SFL and provides `print(value)`, `write(value)`, and `readline()`. The output functions write byte strings unchanged and use the SFL representation for other values. `print` appends LF. `readline` returns a byte string including its line ending, or null at EOF.
+The bundled `stdio` library is written in SFL and provides `print(value)`, `write(value)`, and `readline()`. The output functions write byte strings unchanged and use the SFL representation for other values. `print` appends LF. `readline` returns a byte string with a trailing CRLF normalized to LF, retaining the LF. Existing LF endings, embedded carriage returns, and final lines without a newline are preserved. It returns null at EOF.
 
 `import "str"` provides `str.chr(code)`, which accepts an integer from 0 through 255 and returns a one-byte string. For example, `str.chr(65)` returns `"A"`, and `str.chr(0)` returns `"\x00"`. Non-integers, including `65.0`, and out-of-range inputs raise language exceptions that `try` can catch. This function is implemented entirely in SFL without host signals. It converts byte values, not Unicode code points.
 
@@ -94,12 +94,35 @@ Only compilation results are cached. Every `run` executes the main module again,
 - `return` exits only the nearest brace-delimited block. `self` refers to its enclosing function. Function bodies, unselected if branches, and unused exception handlers are evaluated only when needed.
 - Blocks do not implicitly return their final expression. A block without an executed `return` returns null. A module returns its export dictionary.
 - `obj[key]` returns null for a missing key; `obj.key` raises an exception. String indexing uses non-negative integer keys and returns one-byte strings. Numerically equivalent floating-point keys work too; negative indices do not wrap around.
+- Byte strings support persistent updates with `text[index := value]`, returning a new string without changing the original. Update indices must be integers; values must be integer bytes or null. See the rules below.
 - The brackets in `[]` must be adjacent. Dictionary update entries may be separated by newlines or commas. Function parameters and arguments use commas, with trailing commas allowed.
 - Precedence, from highest to lowest, is postfix, prefix, multiplication/division/remainder, addition/subtraction, and comparison. Arithmetic is left-associative. Comparison chains require explicit parentheses rather than Python-style chaining.
 - Ordinary newlines separate statements. Parentheses and call arguments allow line continuation, while embedded brace-delimited bodies retain their own statement boundaries.
 - `eval` parses one expression, which may be a block or `do` expression containing statements. Its default environment and signal allowlist are empty. Use parentheses to clarify the boundaries of complex `eval` and `emit` operands.
 - `repr` produces an expression that SFL `eval` can read, including closure captures and null bindings. NaN is represented as `(inf - inf)`. Reconstructed functions preserve call behavior, not object identity.
 - `try` catches language exception dictionaries containing `code`, `message`, and, when available, `source`, `line`, and `column`. Internal return signals and unexpected host failures are not caught as language exceptions.
+
+### Byte-String Updates
+
+`text[index := value]` operates on byte positions, not Unicode characters:
+
+- `index` must be a non-negative integer. Unlike read indexing, floating-point indices such as `1.0` are rejected.
+- `value` must be an integer from 0 through 255, or null (`{}` or `null`). A one-byte string such as `"A"` is not accepted as the value.
+- Writing an existing position replaces its byte. Writing at `len text` appends a byte. Writing beyond the end raises an exception instead of creating gaps.
+- Null deletes the byte and shifts later bytes left. Deleting a missing non-negative position leaves the string unchanged.
+- Multiple update entries run from left to right, each against the result of the previous entry. The original string and any captured copies remain unchanged.
+- Invalid index types raise `INVALID_KEY`, invalid byte values raise `INVALID_BYTE`, and negative or gap-creating indices raise `INDEX_OUT_OF_RANGE`. These are language exceptions that `try` can catch.
+
+| Expression | Result |
+| --- | --- |
+| `"abc"[1 := 90]` | `"aZc"` |
+| `""[0 := 65]` | `"A"` |
+| `"abc"[3 := 100]` | `"abcd"` |
+| `"abc"[1 := {}]` | `"ac"` |
+| `"abc"[9 := {}]` | `"abc"` |
+| `"abcd"[1 := {}, 1 := {}]` | `"ad"` |
+
+For example, `content := content[(len content) - 1 := {}]` removes the last byte of a non-empty input line.
 
 The interpreter does not sandbox resource usage or file access for untrusted programs. Recursion and memory limits are governed by Python and the operating system.
 

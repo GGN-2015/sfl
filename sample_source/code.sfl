@@ -38,8 +38,8 @@ d := "hello world a\n"
 d := "shadow old string" # old "d" will not be able to access 
 # you can use d.0, d.1 or d[0], d[1], d[a] to get index from string d
 # important:
-#   you can not use d[a := b] to change the value
-#   it will trigger exception
+#   d[a := b] returns a new string; a must be an integer
+#   b must be an integer byte (0..255) or null to delete a byte
 
 # empty dictionary and dictionary with initial value
 #   integer, float, string can serve as key in dict

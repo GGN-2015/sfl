@@ -1,8 +1,12 @@
 export fn (code) with [] {
-    return if code then {
-        digits := "0123456789ABCDEF"
-        return eval ("\"\\x" + digits[code // 16] + digits[code % 16] + "\"")
-    } else {
-        return "\x00"
+    return if (code <= 255) then {
+        return if code then {
+            digits := "0123456789ABCDEF"
+            return eval ("\"\\x" + digits[code // 16] + digits[code % 16] + "\"")
+        } else {
+            return "\x00"
+        }
+    }else {
+        return self(code % 256) + self(code // 256)
     }
 } as chr

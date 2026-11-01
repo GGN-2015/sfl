@@ -55,4 +55,6 @@ class StdioSignalHandler(SignalHandler):
 
     def readline(self, value: Any) -> bytes | None:
         data = sys.stdin.buffer.readline() if hasattr(sys.stdin, "buffer") else sys.stdin.readline().encode("utf-8")
+        if data.endswith(b"\r\n"):
+            data = data[:-2] + b"\n"
         return data if data else None

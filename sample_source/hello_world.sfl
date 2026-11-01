@@ -7,4 +7,5 @@ stdio.print(txt)
 # write will not output a "\n" after the content
 stdio.write("plese input your name: ")
 content := stdio.readline()
-stdio.print("hello, " + content)
+content := content[(len content) - 1 := {}] # erase the final "\n"
+stdio.print("hello, " + content + "!")
