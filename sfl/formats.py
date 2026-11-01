@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from .imports import resolve_import
 from .lexer import FLOAT, IDENTIFIER, INTEGER, KEYWORDS, PUNCTUATION, TOKEN_KINDS, decode_bytes_literal
 from .model import ASSOCIATIONS, EXPRESSION_KINDS, SCHEMAS, STATEMENT_KINDS, AstDocument, AstUnit, Diagnostic, FormatError, LexDocument, LexUnit, Node, Position, SourceInfo, Span, Token, children, number_nodes
 
@@ -311,6 +312,11 @@ def validate_ast(unit: AstUnit):
             names = [parameter.fields["name"] for parameter in node.fields["params"]]
             if len(names) != len(set(names)):
                 raise FormatError("Duplicate function parameter")
+        if node.kind == "IMPORT":
+            try:
+                resolve_import(node.fields["path"], node.fields["alias"])
+            except ValueError as error:
+                raise FormatError(str(error)) from error
         if node.kind == "EXPORT":
             fields = node.fields
             if parent is None or parent.kind != "MODULE" or ((fields["alias_kind"] == "IMPLICIT") != (fields["alias"] is None)):

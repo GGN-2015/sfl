@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 from .formats import validate_ast
+from .imports import resolve_import
 from .model import AstDocument, AstUnit, Diagnostic, LexDocument, Node, SflError, Span, Token
 
 
@@ -91,6 +92,10 @@ class Parser:
             self.take()
             path = self.expect("STRING")
             alias = self.expect("IDENT").raw if self.match("KW_AS") else None
+            try:
+                resolve_import(path.payload, alias)
+            except ValueError as error:
+                self.error(str(error), path, "IMPORT_ERROR")
             return self.node("IMPORT", start, mode="LIBRARY" if first.kind == "KW_IMPORT" else "RELATIVE", path=path.payload, alias=alias)
         if first.kind == "KW_RETURN":
             self.take()

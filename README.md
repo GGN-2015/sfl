@@ -61,6 +61,18 @@ The bundled `stdio` library is written in SFL and provides `print(value)`, `writ
 
 `import "name"` searches directories supplied with `-I`, then `SFL_PATH` (separated by the platform's path-list separator), then the bundled standard library. `local "name"` searches only beside the current source file. A missing `.sfl` suffix is added automatically. Both forms support `as alias`. Circular imports raise `IMPORT_CYCLE`.
 
+Without `as`, the final filename, after adding the optional suffix, must be an identifier followed by `.sfl`: `[A-Za-z_][A-Za-z0-9_]*\.sfl`. Its stem becomes the local binding. Directory names do not affect this check. Filenames containing spaces, hyphens, extra dots, non-ASCII letters, or a leading digit require an explicit `as` alias. Keyword stems such as `if` also require an alias, since keywords cannot be variable names. An alias must itself be a non-keyword identifier. Invalid import bindings are rejected while building the AST, before looking up or executing the target module.
+
+| Statement | Binding or result |
+| --- | --- |
+| `import "stdio"` | `stdio` (the `.sfl` suffix is added) |
+| `local "_helper2.sfl"` | `_helper2` |
+| `local "some-folder/helper.sfl"` | `helper` |
+| `import "my-module.sfl" as module` | `module` |
+| `local "123.sfl" as data` | `data` |
+| `local "my-module.sfl"` | `IMPORT_ERROR`: an `as` alias is required |
+| `import "if.sfl"` | `IMPORT_ERROR`: an `as` alias is required |
+
 `sample_source/code.sfl` includes `local "stdio"`, so running the complete file requires an actual `stdio.sfl` beside it. The bundled library does not substitute for a local import. The `lex` and `ast` commands do not require imported files to exist.
 
 ## Cache Format and Invalidation
@@ -167,6 +179,7 @@ Handlers receive one SFL value and return one SFL value: `None`, int, float, byt
 - `sfl/parser.py`: AST construction.
 - `sfl/formats.py`: plain-text cache serialization and validation.
 - `sfl/cache.py`: cache invalidation and atomic writes.
+- `sfl/imports.py`: shared import filename and binding validation.
 - `sfl/values.py`: runtime values and persistent dictionaries.
 - `sfl/runtime.py`: AST interpretation.
 - `sfl/signals.py`: extensible signal handler classes.

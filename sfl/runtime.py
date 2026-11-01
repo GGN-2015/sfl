@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .formats import read_ast, write_ast
+from .imports import resolve_import
 from .lexer import IDENTIFIER, KEYWORDS, lex
 from .model import AstDocument, Node, SflError, SourceInfo
 from .parser import parse
@@ -312,10 +313,9 @@ class Interpreter:
     def import_module(self, node, context):
         fields = node.fields
         try:
-            name = fields["path"].decode("utf-8")
-        except UnicodeError:
-            self.fail("IMPORT_ERROR", "Module path must be valid UTF-8", node, context)
-        relative = Path(name if name.endswith(".sfl") else name + ".sfl")
+            relative, alias = resolve_import(fields["path"], fields["alias"])
+        except ValueError as error:
+            self.fail("IMPORT_ERROR", str(error), node, context)
         if fields["mode"] == "RELATIVE":
             bases = [context.origin.parent if context.origin else Path.cwd()]
         else:
@@ -325,7 +325,7 @@ class Interpreter:
         try:
             path = next((base / relative for base in bases if (base / relative).is_file()), None)
             if path is None:
-                self.fail("MODULE_NOT_FOUND", f"Module not found: {name}", node, context)
+                self.fail("MODULE_NOT_FOUND", f"Module not found: {relative}", node, context)
             module = self.load_module(path, context.allowed)
         except OSError as error:
             self.fail("IMPORT_ERROR", str(error), node, context)
@@ -333,8 +333,5 @@ class Interpreter:
             if isinstance(error, RuntimeError):
                 raise
             raise RuntimeError(error.code, error.message, error.span, error.source or str(path)) from error
-        alias = fields["alias"] if fields["alias"] is not None else relative.stem.encode("utf-8")
-        if not IDENTIFIER.fullmatch(alias) or alias.decode("ascii") in KEYWORDS:
-            self.fail("IMPORT_ERROR", "Module name needs an explicit identifier alias", node, context)
         context.environment[alias] = module
         return None

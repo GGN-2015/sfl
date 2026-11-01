@@ -59,7 +59,7 @@ def atomic_write(path: Path, text: str):
 def implementation_hash(stage: str) -> str:
     names = ["model.py", "lexer.py", "formats.py", "cache.py"]
     if stage == "ast":
-        names.append("parser.py")
+        names.extend(["parser.py", "imports.py"])
     result = hashlib.sha256(b"SFL-0.1-cache-v1\0" + stage.encode("ascii"))
     for name in names:
         result.update(name.encode("ascii") + b"\0")
