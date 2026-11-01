@@ -1,0 +1,311 @@
+# a line or the remaining part of a line beginning with # is a comment,
+# except when # appears inside a string
+
+# import from library search path
+#   if you have a stdio defined before
+#   `import "stdio"` will shadow the old value of stdio
+#   `import "stdio" as io` will shadow the old value of io
+import "stdio"
+import "stdio" as io
+
+# import from relative path
+#   local means local import
+#   behave like import, but in relative path
+local "stdio"
+local "stdio" as io 
+
+# integer and float value (value operation behave like python)
+#   add +, sub -, mul *
+#   float div /
+#   int div //
+#   int mod %
+# compare
+#   <, >, <=, >=, ==, !=
+# besides between integer and float, == between different type
+#   return 0
+a := 1
+b := 1.0
+b := inf  # inf is a keyword in this language to show float infinity
+b := -inf # -inf is also available
+          # comparison between float and float, float and int
+          # should have the same response with python
+c := 1e9 + 7
+
+# string is a special dictionary
+#   string add +
+# when you assign new value to var, you shadowed old one
+d := "hello world a\n"
+d := "shadow old string" # old "d" will not be able to access 
+# you can use d.0, d.1 or d[0], d[1], d[a] to get index from string d
+# important:
+#   you can not use d[a := b] to change the value
+#   it will trigger exception
+
+# empty dictionary and dictionary with initial value
+#   integer, float, string can serve as key in dict
+#   every non-null type can serve as value in dict
+#   module is just another dictionary
+#   string behave like dictionary
+#     but it is string, not exactly dictionary
+# null can not be used as the value or key of a dictionary
+#   null value means "to erase it"
+#   and null can not be used as the key of a dictionary as well
+e := []                    # [] is a different token means empty dict
+
+# before old e is shadowed, old e is available in calculation
+e := e["hello" := "world"] # insert key "hello"
+e := e["hello" := null]    # erase key "hello"
+e := e[a := b] # you can also use var in key or value position
+
+# you can also write multiple lines
+#   and to make a dictionary with initial keys
+e := [][
+    "a" := 123
+    "b" := 456
+]
+
+# which has the same behavior as
+e := []["a" := 123]["b" := 456]
+
+# but you can not write
+#   e[]
+#   [][]
+# because [] is a value, and [a := b] is an operator on value
+
+# set 0 maps to "hello"
+#   this will not change the value of d
+#   this will only make f[0] different from d[0]
+# the interpreter will implement dictionary with fhq-rand-treap
+#   which is sustainable (with common immutable parts)
+#   the following code will throw an exception
+#   lets catch it
+# numeric keys are ordered before string keys
+#   integers and floats compare by numeric value
+#     1 and 1.0 denote the same key
+#     0 and 0.0 and -0.0 are the same key
+#     -inf, inf may exists in key
+#     -inf <= every number, inf >= every number
+#     nan can not be used as key
+#   strings compare lexicographically (content of string is bytes)
+#     we will ignore unicode problems, just bytes
+ans := try {
+    f := d[0 := "hello"]
+} except e then {
+    # exception object is a dictionary
+    # return always ends current code block
+    return e
+}
+
+# remember, the return statement is very different in sfl-lang
+#   return is always restricted in the nearest braces
+#   every braces has an return value
+#   in the same brace, the statements after return will be ignored
+# the following statement has the same function
+ans := 1
+ans := do {
+    return 1
+}
+
+# get the length of dictionary
+g := len d
+
+# get value from dictionary
+h := d[1]
+h := d[1.0] # since 1.0 == 1 is true, d[1.0] is equal to d[1]
+            # same value lead to the same key
+# since 0.1 + 0.1 == 0.2, so d[0.1 + 0.1] is always same with d[0.2]
+# but 0.1 + 0.2 != 0.3, so d[0.1 + 0.2] is not d[0.3]
+# integer and float index in dictionary is sorted with "==" and "<"
+
+# null value
+#   because an empty code return null
+#   every null is equal to each other
+#   every non-null value is not equal to null
+i := {}
+
+# function
+#   the later defined constant will shadow the former one
+# signal emit is allowed in function
+#   repr is allowed for function
+# when we defined a function, the environment value will be saved
+#   with this function
+#   if the value of environment changed after the definition
+#   it has no impact on current function (snapshot closure)
+j := fn (a, b, c) {
+    # here a in the parameter will shadow the outside a
+    # if you define new constant here, it can also shadow outside var
+    b := 2 # this will shadow parameter b
+    h := 1 # this will shadow outside h
+    # self means function it self
+    return if (a <= 0) then {
+        # here, return is just a calculation
+        #   not function return
+        #   the impact of return will never go outside current braces
+        return 1
+    } else {
+        # when you repr a function, self is a special keyword
+        #   it is not a value in environment
+        #   it is hard coded into the function itself
+        # unlike return is bound to the nearest brace
+        #   self is bound to the nearest function definition
+        # you can define a function inside another function
+        #   inside the inner function
+        #   self will be different with the outer function
+        return a * self(a - 1, b, c)
+        # another interesting fact is
+        #   you can actually calculate repr self inside any function
+    }
+    # if you forget to write return statement
+    #   it will return null (which is {} in the program)
+}
+j := fn () { # keep the bracket even if no parameter is needed
+    # here, in this line, new "j" is not completed
+    # so it will call the shadowed old j
+    return j(3, 0, 1)
+}
+
+# function with environment
+# if you provide an environment, the outside environment
+#   will not be available
+#   the value of v1 and v2 will be tied to a fixed value when defined
+j := fn (a, b, c) with [][
+    "v1" := 1
+    "v2" := a # get the value of a, and fix it, v2 will not change
+              # this is not the parameter a, its outside a
+] {
+    # in function body
+    # you can use parameter and v1, v2 but you can not use
+    # outside environment
+    v1 := 3 # you can also shadow it inside the body
+}
+
+# if a is not an integer, emit an error
+# if a != 0
+#   then the result will be b, and c will not be evaluated
+# if a == 0
+#   then the result will be c, and b will not be evaluated
+k := if a then {
+    # you can define local constant in brace
+    return b
+} else {
+    return c
+}
+
+# simple code
+l := do {
+    # the return value of the block will be assigned to l
+    # this code will be evaluated at once
+    return a
+}
+
+# make a string from a value
+#   this will give you a string, when you evaluate it
+#   you will get exact same value
+#   every type of value can be "repr" to a string
+# you should know that
+#   when you repr a function
+#   you definitely get a function with environment defines
+#   so that it can be eval everywhere
+m := repr a
+
+# to eval a string, you must provide value for names before use
+#   or no constant name will be available
+# signal emit can be used in eval
+#   you can use 0 or 1 with statement
+#   you can use finite many with_signal statement to 
+#     tell eval which signal can be used
+#     if unsupported signal triggered, it return {} (which is null)
+n := eval "a + b" with [][
+    "a" := 1
+    "b" := 1.0
+]
+v1 := "my_signal_name1"
+n := ( # use bracket to write multi-line code
+    eval "emit 1 as \"my_signal_name\""
+    with_signal "my_signal_name"
+    with_signal v1 # variable name can be used in with_signal
+                   # if v1 is not string, error triggered
+                   # the value of v1 will be used as signal name
+)
+
+# dot operation is an easy way to access value from dictionary
+#   the rhs of dot operation can only be non-negative integer or
+#   var-name-like identifier, e.g.
+#     f.0 means f[0]
+#     f.x means f["x"] (not f[x])
+#   link dots link a.b.c is also available
+#   you can not write assignment for "f.x"
+f := [][
+    0 := 1
+    "x" := 2
+]
+p := f.0
+q := f.x
+
+# export constant
+#   if your source file name is "test.sfl"
+#   then the other file under same folder can import your source with
+#     import "test"
+#     import "test" as test # or some other name
+#   then they can use it by
+#     test.a
+#     test["a"]
+#     test[0]
+#     test.0
+#     test["hello world"]
+#   export can not be used in function or between { and }
+#   the first one will be shadowed when you export one "name" twice
+# when you export with same name
+#   new one will cover old one
+export a          # means "export a as a"
+export a as astra # astra will not be treated as var name
+export a as 0
+export a as "hello world"
+export (1 + 2.0) as val
+export do { return 1 } as val2
+export fn (a, b, c) { # assume c is a function
+    return a + b + c()
+} as func1
+
+# you should not use an undefined variable
+#   program will get an error when you try to use undefined variable
+# if "obj" is a dictionary
+#   obj["a"] will get {} (null value) if obj has no member called a
+#   obj.a will get an exception if a does not exist
+obj := []["a" := 1]
+r := obj.a # exists
+try {          # catch the exception is a good idea
+    r := obj.b # obj.b not exists
+    return r
+} except e then {
+    return e # return error info
+}
+
+# you can send signal to interpreter
+#   signal should be followed with exact one value
+#   IMPORTANT the interpreter will get the value of a
+#   and return something back to this program
+# so if you are going to write an extension to this program
+#   extend the signal processor
+#   and use signal in you program, signal name should be string
+#   if you use other type as signal name
+#   an exception will be triggered
+# if signal name not defined at interpreter or not allowed
+#   emit statement return null {}
+v := "my_signal_name"
+s := emit a as "my_signal_name"
+s := emit a as v # same as above
+
+# you can use try statement to catch exception
+#   if an exception is not caught, the program end
+ans := try {
+    # some code with potential exception
+    local_v := 1 # you can define local variable here
+                 # it will not change the environment in the long run
+    return 1     # without return, this block will return null
+} except e then {
+    # here e is a var name
+    #   e can shadow outside e in this block
+    #   it will not affect the world after this block
+    return 2
+}

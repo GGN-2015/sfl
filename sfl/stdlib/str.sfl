@@ -1,0 +1,8 @@
+export fn (code) with [] {
+    return if code then {
+        digits := "0123456789ABCDEF"
+        return eval ("\"\\x" + digits[code // 16] + digits[code % 16] + "\"")
+    } else {
+        return "\x00"
+    }
+} as chr

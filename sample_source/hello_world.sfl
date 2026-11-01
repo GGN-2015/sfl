@@ -1,0 +1,10 @@
+import "stdio"
+
+# print will output a "\n" after the content
+txt := "hello world!"
+stdio.print(txt)
+
+# write will not output a "\n" after the content
+stdio.write("plese input your name: ")
+content := stdio.readline()
+stdio.print("hello, " + content)

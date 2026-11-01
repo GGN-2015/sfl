@@ -1,0 +1,27 @@
+import "stdio"
+
+n := 9
+
+_raw_fib := fn (mem, pos) with [] {
+    return if (mem[pos] != {}) then {
+        return mem
+    } else {
+        return if (pos <= 1) then {
+            mem := mem[pos := 1]
+            return mem
+        }else {
+            mem := self(mem, pos - 2)
+            mem := self(mem, pos - 1)
+            mem := mem[pos := mem[pos - 1] + mem[pos - 2]]
+            return mem
+        }
+    }
+}
+
+fib := fn (idx) with [][
+    "_raw_fib" := _raw_fib
+] {
+    return _raw_fib([], idx)[idx]
+}
+
+stdio.print("fib(" + repr(n) + ") = " + repr(fib(n)))

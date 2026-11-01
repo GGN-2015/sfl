@@ -1,0 +1,11 @@
+export fn (value) with [] {
+    return emit value as "stdio.print"
+} as print
+
+export fn (value) with [] {
+    return emit value as "stdio.write"
+} as write
+
+export fn () with [] {
+    return emit null as "stdio.readline"
+} as readline
