@@ -108,7 +108,7 @@ class AstDocument:
     content_hash: str = ""
 
 
-EXPRESSION_KINDS = frozenset("NAME INT FLOAT STRING INF NULL EMPTY_DICT BLOCK UNARY BINARY DICT_UPDATE INDEX MEMBER CALL FUNCTION SELF IF DO TRY LENGTH REPR TYPE EVAL EMIT ERROR_EXPR".split())
+EXPRESSION_KINDS = frozenset("NAME INT FLOAT STRING INF NULL EMPTY_DICT BLOCK UNARY BINARY DICT_UPDATE INDEX MEMBER CALL FUNCTION SELF ARGS IF DO TRY LENGTH REPR TYPE EVAL EMIT RAISE ERROR_EXPR".split())
 STATEMENT_KINDS = frozenset("IMPORT BINDING EXPR_STMT RETURN EXPORT ERROR_STMT".split())
 SCHEMAS = {
     "MODULE": {"body": "statements"},
@@ -128,8 +128,9 @@ SCHEMAS = {
     "MEMBER": {"base": "expression", "key_kind": {"INT", "NAME"}, "key": "bytes"},
     "CALL": {"callee": "expression", "args": "expressions"},
     "PARAM": {"name": "identifier"},
-    "FUNCTION": {"params": "params", "environment": "optional_expression", "body": "block"},
+    "FUNCTION": {"params": "params", "variadic": {"YES", "NO"}, "environment": "optional_expression", "body": "block"},
     "SELF": {"function": "function"},
+    "ARGS": {"function": "function"},
     "IF": {"condition": "expression", "then": "block", "else": "block"},
     "DO": {"body": "block"},
     "RETURN": {"value": "expression", "target": "block"},
@@ -137,12 +138,13 @@ SCHEMAS = {
     "LENGTH": {"value": "expression"}, "REPR": {"value": "expression"}, "TYPE": {"value": "expression"},
     "EVAL": {"code": "expression", "environment": "optional_expression", "signals": "expressions"},
     "EMIT": {"value": "expression", "signal": "expression"},
+    "RAISE": {"value": "expression"},
     "IMPORT": {"mode": {"LIBRARY", "RELATIVE"}, "path": "bytes", "alias": "optional_identifier"},
     "EXPORT": {"value": "expression", "alias_kind": set("IMPLICIT NAME INT FLOAT STRING".split()), "alias": "optional_bytes"},
     "ERROR_EXPR": {"code": "bytes", "message": "bytes"},
     "ERROR_STMT": {"code": "bytes", "message": "bytes"},
 }
-ASSOCIATIONS = {("RETURN", "target"), ("SELF", "function")}
+ASSOCIATIONS = {("RETURN", "target"), ("SELF", "function"), ("ARGS", "function")}
 
 
 def children(node: Node):

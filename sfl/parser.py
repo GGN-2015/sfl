@@ -157,10 +157,11 @@ class Parser:
             left = Node("STRING", first.span, {"bytes": first.payload})
         elif first.kind in {"KW_INF", "KW_NULL", "EMPTY_DICT"}:
             left = Node({"KW_INF": "INF", "KW_NULL": "NULL", "EMPTY_DICT": "EMPTY_DICT"}[first.kind], first.span)
-        elif first.kind == "KW_SELF":
+        elif first.kind in {"KW_SELF", "KW_ARGS"}:
+            kind = first.kind[3:]
             if not self.functions:
-                self.error("self requires an enclosing function body", first, "INVALID_SELF")
-            left = Node("SELF", first.span, {"function": self.functions[-1]})
+                self.error(first.raw.decode("ascii") + " requires an enclosing function body", first, "INVALID_" + kind)
+            left = Node(kind, first.span, {"function": self.functions[-1]})
         elif first.kind == "LPAREN":
             with self.newlines(True):
                 left = self.expression()
@@ -210,6 +211,8 @@ class Parser:
             value = self.expression()
             self.expect("KW_AS")
             left = self.node("EMIT", start, value=value, signal=self.expression())
+        elif first.kind == "KW_RAISE":
+            left = self.node("RAISE", start, value=self.expression())
         else:
             self.error(f"Expected expression, got {first.kind}", first)
 
@@ -253,9 +256,15 @@ class Parser:
     def function(self, first: Token) -> Node:
         self.expect("LPAREN")
         params = []
+        variadic = "NO"
         with self.newlines(True):
             if not self.match("RPAREN"):
                 while True:
+                    if self.match("ELLIPSIS"):
+                        variadic = "YES"
+                        self.match("COMMA")
+                        self.expect("RPAREN")
+                        break
                     token = self.expect("IDENT")
                     if any(parameter.fields["name"] == token.raw for parameter in params):
                         self.error("Duplicate function parameter", token, "DUPLICATE_PARAMETER")
@@ -268,7 +277,7 @@ class Parser:
         self.skip_lines()
         environment = self.expression() if self.match("KW_WITH") else None
         self.skip_lines()
-        function = Node("FUNCTION", first.span, {"params": params, "environment": environment, "body": None})
+        function = Node("FUNCTION", first.span, {"params": params, "variadic": variadic, "environment": environment, "body": None})
         previous_blocks = self.blocks
         self.blocks = []
         self.functions.append(function)

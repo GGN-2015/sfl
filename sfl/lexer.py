@@ -5,12 +5,12 @@ import re
 from .model import LexDocument, LexUnit, Position, SourceInfo, Span, Token
 
 
-KEYWORDS = {word: "KW_" + word.upper() for word in "import local as fn with with_signal if then else do return len repr type eval emit try except self null inf export".split()}
+KEYWORDS = {word: "KW_" + word.upper() for word in "import local as fn with with_signal if then else do return len repr type eval emit raise try except self args null inf export".split()}
 PUNCTUATION = {
     b":=": "BIND", b"//": "FLOOR_DIV", b"<=": "LE", b">=": "GE", b"==": "EQ", b"!=": "NE",
     b"+": "PLUS", b"-": "MINUS", b"*": "STAR", b"/": "SLASH", b"%": "PERCENT",
     b"<": "LT", b">": "GT", b"(": "LPAREN", b")": "RPAREN", b"[": "LBRACKET", b"]": "RBRACKET",
-    b"{": "LBRACE", b"}": "RBRACE", b",": "COMMA", b".": "DOT", b"[]": "EMPTY_DICT",
+    b"{": "LBRACE", b"}": "RBRACE", b",": "COMMA", b".": "DOT", b"...": "ELLIPSIS", b"[]": "EMPTY_DICT",
 }
 IDENTIFIER = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*")
 INTEGER = re.compile(rb"[0-9]+")
@@ -131,7 +131,9 @@ def lex(data: bytes, source: SourceInfo) -> LexDocument:
         else:
             pair = data[offset:offset + 2]
             single = data[offset:offset + 1]
-            if len(pair) == 2 and pair in PUNCTUATION:
+            if data.startswith(b"...", offset):
+                emit("ELLIPSIS", 3)
+            elif len(pair) == 2 and pair in PUNCTUATION:
                 emit(PUNCTUATION[pair], 2)
             elif single in PUNCTUATION:
                 emit(PUNCTUATION[single], 1)

@@ -308,8 +308,8 @@ def validate_ast(unit: AstUnit):
             raise FormatError("Error node in VALID AST")
         if node.kind == "RETURN" and (block is None or node.fields["target"] is not block):
             raise FormatError("Invalid return target")
-        if node.kind == "SELF" and (function is None or node.fields["function"] is not function):
-            raise FormatError("Invalid self target")
+        if node.kind in {"SELF", "ARGS"} and (function is None or node.fields["function"] is not function):
+            raise FormatError("Invalid " + node.kind.lower() + " target")
         if node.kind == "FUNCTION":
             names = [parameter.fields["name"] for parameter in node.fields["params"]]
             if len(names) != len(set(names)):

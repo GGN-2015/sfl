@@ -1,92 +1,218 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 
 from .formats import quote
-from .model import Node
+from .imports import resolve_import
+from .lexer import IDENTIFIER
+from .model import Node, children
 from .values import Dictionary, Function, integer_text
 
 
 SYMBOLS = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/", "FLOOR_DIV": "//", "MOD": "%", "LT": "<", "GT": ">", "LE": "<=", "GE": ">=", "EQ": "==", "NE": "!="}
 
 
+def indent(text: str) -> str:
+    lines = []
+    depth = 0
+    for line in text.splitlines():
+        content = line.strip()
+        if not content:
+            continue
+        closing = len(content) - len(content.lstrip(")]}"))
+        lines.append("  " * max(0, depth - closing) + content)
+        quoted = False
+        escaped = False
+        for character in content:
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    quoted = False
+            elif character == '"':
+                quoted = True
+            elif character == "#":
+                break
+            elif character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+    return "\n".join(lines)
+
+
+def parameters(node: Node) -> str:
+    names = [parameter.fields["name"].decode("ascii") for parameter in node.fields["params"]]
+    if node.fields["variadic"] == "YES":
+        names.append("...")
+    return ", ".join(names)
+
+
+def environment_update(base: str, entries: list[str]) -> str:
+    return "(" + base + ")[\n" + "\n".join(entries) + "\n]" if entries else base
+
+
+@dataclass
+class Scope:
+    names: set[bytes] = field(default_factory=set)
+    environment: str = "[]"
+
+    def copy(self) -> Scope:
+        return Scope(set(self.names), self.environment)
+
+
+class SourceRenderer:
+    def __init__(self, node: Node, names=(), explicit_environments: bool = False):
+        self.explicit_environments = explicit_environments
+        self.reserved = set(names)
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            for value in current.fields.values():
+                if isinstance(value, bytes):
+                    self.reserved.update(IDENTIFIER.findall(value))
+            pending.extend(child for _, child in children(current))
+
+    def fresh_name(self) -> bytes:
+        position = 1
+        while (name := f"_sfl_repr_env_{position}".encode("ascii")) in self.reserved:
+            position += 1
+        self.reserved.add(name)
+        return name
+
+    def needs_environment(self, node: Node) -> bool:
+        if node.kind == "FUNCTION":
+            environment = node.fields["environment"]
+            return environment is None or self.needs_environment(environment)
+        return any(self.needs_environment(child) for _, child in children(node))
+
+    def block(self, node: Node, scope: Scope, prefix=()) -> str:
+        inner = scope.copy()
+        statements = list(prefix)
+        statements.extend(self.render(statement, inner) for statement in node.fields["body"])
+        return "{\n" + "\n".join(statements) + "\n}" if statements else "{}"
+
+    def function(self, node: Node, scope: Scope) -> str:
+        fields = node.fields
+        signature = "fn (" + parameters(node) + ")"
+        param_names = {parameter.fields["name"] for parameter in fields["params"]}
+        if not self.explicit_environments:
+            environment = " with (" + self.render(fields["environment"], scope) + ")" if fields["environment"] else ""
+            return signature + environment + " " + self.block(fields["body"], Scope(scope.names | param_names))
+        if fields["environment"] is None:
+            captures = sorted(scope.names - param_names)
+            entries = [quote(name) + " := [][0 := " + name.decode("ascii") + "]" for name in captures]
+            prefix = [name.decode("ascii") + " := " + name.decode("ascii") + "[0]" for name in captures]
+            environment = environment_update(scope.environment, entries)
+            body = self.block(fields["body"], Scope(scope.names | param_names, scope.environment), prefix)
+            return signature + " with (" + environment + ") " + body
+        environment = self.render(fields["environment"], scope)
+        body_scope = Scope(param_names)
+        if self.needs_environment(fields["body"]):
+            name = self.fresh_name()
+            identifier = name.decode("ascii")
+            forwarded = "(" + identifier + ")[" + quote(name) + " := " + identifier + "]"
+            body_scope.environment = forwarded
+            body = self.block(fields["body"], body_scope)
+            return "(do {\n" + identifier + " := " + environment + "\nreturn " + signature + " with (" + forwarded + ") " + body + "\n})"
+        return signature + " with (" + environment + ") " + self.block(fields["body"], body_scope)
+
+    def render(self, node: Node, scope: Scope) -> str:
+        kind, fields = node.kind, node.fields
+        if kind in {"NAME", "PARAM"}:
+            return fields["name"].decode("ascii")
+        if kind in {"INT", "FLOAT"}:
+            return fields["text"].decode("ascii")
+        if kind == "STRING":
+            return quote(fields["bytes"])
+        if kind in {"NULL", "INF", "EMPTY_DICT", "SELF", "ARGS"}:
+            return {"NULL": "null", "INF": "inf", "EMPTY_DICT": "[]", "SELF": "self", "ARGS": "args"}[kind]
+        if kind == "MODULE":
+            return "\n".join(self.render(statement, scope) for statement in fields["body"])
+        if kind == "BLOCK":
+            return self.block(node, scope)
+        if kind == "BINDING":
+            value = self.render(fields["value"], scope)
+            scope.names.add(fields["name"])
+            return fields["name"].decode("ascii") + " := " + value
+        if kind == "EXPR_STMT":
+            return self.render(fields["value"], scope)
+        if kind == "RETURN":
+            return "return " + self.render(fields["value"], scope)
+        if kind == "RAISE":
+            return "(raise (" + self.render(fields["value"], scope) + "))"
+        if kind == "UNARY":
+            return "(-(" + self.render(fields["operand"], scope) + "))"
+        if kind == "BINARY":
+            return "(" + self.render(fields["left"], scope) + " " + SYMBOLS[fields["op"]] + " " + self.render(fields["right"], scope) + ")"
+        if kind == "ENTRY":
+            return self.render(fields["key"], scope) + " := " + self.render(fields["value"], scope)
+        if kind == "DICT_UPDATE":
+            return "(" + self.render(fields["base"], scope) + ")[" + ", ".join(self.render(entry, scope) for entry in fields["entries"]) + "]"
+        if kind == "INDEX":
+            return "(" + self.render(fields["base"], scope) + ")[" + self.render(fields["key"], scope) + "]"
+        if kind == "MEMBER":
+            return "(" + self.render(fields["base"], scope) + ")." + fields["key"].decode("ascii")
+        if kind == "CALL":
+            return "(" + self.render(fields["callee"], scope) + ")(" + ", ".join(self.render(argument, scope) for argument in fields["args"]) + ")"
+        if kind == "FUNCTION":
+            return self.function(node, scope)
+        if kind == "IF":
+            return "(if (" + self.render(fields["condition"], scope) + ") then " + self.render(fields["then"], scope) + " else " + self.render(fields["else"], scope) + ")"
+        if kind == "DO":
+            return "(do " + self.render(fields["body"], scope) + ")"
+        if kind == "TRY":
+            handler_scope = scope.copy()
+            handler_scope.names.add(fields["error_name"])
+            return "(try " + self.render(fields["body"], scope) + " except " + fields["error_name"].decode("ascii") + " then " + self.render(fields["handler"], handler_scope) + ")"
+        if kind in {"LENGTH", "REPR", "TYPE"}:
+            return "(" + {"LENGTH": "len", "REPR": "repr", "TYPE": "type"}[kind] + " (" + self.render(fields["value"], scope) + "))"
+        if kind == "EVAL":
+            environment = " with (" + self.render(fields["environment"], scope) + ")" if fields["environment"] else ""
+            signals = "".join(" with_signal (" + self.render(signal, scope) + ")" for signal in fields["signals"])
+            return "(eval (" + self.render(fields["code"], scope) + ")" + environment + signals + ")"
+        if kind == "EMIT":
+            return "(emit (" + self.render(fields["value"], scope) + ") as (" + self.render(fields["signal"], scope) + "))"
+        if kind == "IMPORT":
+            _, name = resolve_import(fields["path"], fields["alias"])
+            scope.names.add(name)
+            alias = " as " + fields["alias"].decode("ascii") if fields["alias"] is not None else ""
+            return ("import " if fields["mode"] == "LIBRARY" else "local ") + quote(fields["path"]) + alias
+        if kind == "EXPORT":
+            alias = ""
+            if fields["alias_kind"] != "IMPLICIT":
+                alias = " as " + (quote(fields["alias"]) if fields["alias_kind"] == "STRING" else fields["alias"].decode("ascii"))
+            return "export " + self.render(fields["value"], scope) + alias
+        raise ValueError(f"Cannot render {kind}")
+
+
 def source(node: Node) -> str:
-    kind, fields = node.kind, node.fields
-    if kind in {"NAME", "PARAM"}:
-        return fields["name"].decode("ascii")
-    if kind in {"INT", "FLOAT"}:
-        return fields["text"].decode("ascii")
-    if kind == "STRING":
-        return quote(fields["bytes"])
-    if kind in {"NULL", "INF", "EMPTY_DICT", "SELF"}:
-        return {"NULL": "null", "INF": "inf", "EMPTY_DICT": "[]", "SELF": "self"}[kind]
-    if kind == "MODULE":
-        return "\n".join(source(statement) for statement in fields["body"])
-    if kind == "BLOCK":
-        return "{\n" + "\n".join(source(statement) for statement in fields["body"]) + "\n}"
-    if kind == "BINDING":
-        return fields["name"].decode("ascii") + " := " + source(fields["value"])
-    if kind == "EXPR_STMT":
-        return source(fields["value"])
-    if kind == "RETURN":
-        return "return " + source(fields["value"])
-    if kind == "UNARY":
-        return "(-(" + source(fields["operand"]) + "))"
-    if kind == "BINARY":
-        return "(" + source(fields["left"]) + " " + SYMBOLS[fields["op"]] + " " + source(fields["right"]) + ")"
-    if kind == "ENTRY":
-        return source(fields["key"]) + " := " + source(fields["value"])
-    if kind == "DICT_UPDATE":
-        return "(" + source(fields["base"]) + ")[" + ", ".join(source(entry) for entry in fields["entries"]) + "]"
-    if kind == "INDEX":
-        return "(" + source(fields["base"]) + ")[" + source(fields["key"]) + "]"
-    if kind == "MEMBER":
-        return "(" + source(fields["base"]) + ")." + fields["key"].decode("ascii")
-    if kind == "CALL":
-        return "(" + source(fields["callee"]) + ")(" + ", ".join(source(argument) for argument in fields["args"]) + ")"
-    if kind == "FUNCTION":
-        environment = " with (" + source(fields["environment"]) + ")" if fields["environment"] else ""
-        return "fn (" + ", ".join(source(parameter) for parameter in fields["params"]) + ")" + environment + " " + source(fields["body"])
-    if kind == "IF":
-        return "(if (" + source(fields["condition"]) + ") then " + source(fields["then"]) + " else " + source(fields["else"]) + ")"
-    if kind == "DO":
-        return "(do " + source(fields["body"]) + ")"
-    if kind == "TRY":
-        return "(try " + source(fields["body"]) + " except " + fields["error_name"].decode("ascii") + " then " + source(fields["handler"]) + ")"
-    if kind in {"LENGTH", "REPR", "TYPE"}:
-        return "(" + {"LENGTH": "len", "REPR": "repr", "TYPE": "type"}[kind] + " (" + source(fields["value"]) + "))"
-    if kind == "EVAL":
-        environment = " with (" + source(fields["environment"]) + ")" if fields["environment"] else ""
-        signals = "".join(" with_signal (" + source(signal) + ")" for signal in fields["signals"])
-        return "(eval (" + source(fields["code"]) + ")" + environment + signals + ")"
-    if kind == "EMIT":
-        return "(emit (" + source(fields["value"]) + ") as (" + source(fields["signal"]) + "))"
-    if kind == "IMPORT":
-        alias = " as " + fields["alias"].decode("ascii") if fields["alias"] is not None else ""
-        return ("import " if fields["mode"] == "LIBRARY" else "local ") + quote(fields["path"]) + alias
-    if kind == "EXPORT":
-        alias = ""
-        if fields["alias_kind"] != "IMPLICIT":
-            alias = " as " + (quote(fields["alias"]) if fields["alias_kind"] == "STRING" else fields["alias"].decode("ascii"))
-        return "export " + source(fields["value"]) + alias
-    raise ValueError(f"Cannot render {kind}")
+    return indent(SourceRenderer(node).render(node, Scope()))
+
+
+def represent(value) -> str:
+    if value is None:
+        return "null"
+    if type(value) is int:
+        return integer_text(value).decode("ascii")
+    if type(value) is float:
+        return "(inf - inf)" if math.isnan(value) else repr(value)
+    if isinstance(value, bytes):
+        return quote(value)
+    if isinstance(value, Dictionary):
+        return "[][" + ", ".join(represent(key) + " := " + represent(item) for key, item in value.items()) + "]" if len(value) else "[]"
+    if isinstance(value, Function):
+        param_names = {parameter.fields["name"] for parameter in value.node.fields["params"]}
+        captures = {name: item for name, item in value.environment.items() if name not in param_names}
+        entries = [quote(name) + " := " + represent(item if item is not None else Dictionary()) for name, item in sorted(captures.items())]
+        prefix = [name.decode("ascii") + " := " + name.decode("ascii") + "[0]" for name, item in sorted(captures.items()) if item is None]
+        renderer = SourceRenderer(value.node, captures, explicit_environments=True)
+        body = renderer.block(value.node.fields["body"], Scope(set(captures) | param_names), prefix)
+        return "(fn (" + parameters(value.node) + ") with (" + environment_update("[]", entries) + ") " + body + ")"
+    raise ValueError("Value is not an SFL value")
 
 
 def representation(value) -> bytes:
-    if value is None:
-        return b"null"
-    if type(value) is int:
-        return integer_text(value)
-    if type(value) is float:
-        if math.isnan(value):
-            return b"(inf - inf)"
-        return repr(value).encode("ascii")
-    if isinstance(value, bytes):
-        return quote(value).encode("ascii")
-    if isinstance(value, Dictionary):
-        return b"[][" + b", ".join(representation(key) + b" := " + representation(item) for key, item in value.items()) + b"]" if len(value) else b"[]"
-    if isinstance(value, Function):
-        params = b", ".join(parameter.fields["name"] for parameter in value.node.fields["params"])
-        bindings = b"\n".join(name + b" := " + representation(item) for name, item in sorted(value.environment.items()))
-        return b"(do {\n" + bindings + b"\nreturn fn (" + params + b") " + source(value.node.fields["body"]).encode("ascii") + b"\n})"
-    raise ValueError("Value is not an SFL value")
+    return indent(represent(value)).encode("ascii")

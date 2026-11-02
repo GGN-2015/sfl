@@ -1,4 +1,4 @@
-from .signals import SignalHandler, StdioSignalHandler
+from .signals import CompositeSignalHandler, SignalHandler, StandardSignalHandler, StdioSignalHandler, StrSignalHandler
 
 
 __version__ = "0.1.0"

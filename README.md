@@ -57,7 +57,9 @@ export factorial
 
 The bundled `stdio` library is written in SFL and provides `print(value)`, `write(value)`, and `readline()`. The output functions write byte strings unchanged and use the SFL representation for other values. `print` appends LF. `readline` returns a byte string with a trailing CRLF normalized to LF, retaining the LF. Existing LF endings, embedded carriage returns, and final lines without a newline are preserved. It returns null at EOF.
 
-`import "str"` provides `str.chr(code)`, which accepts an integer from 0 through 255 and returns a one-byte string. For example, `str.chr(65)` returns `"A"`, and `str.chr(0)` returns `"\x00"`. Non-integers, including `65.0`, and out-of-range inputs raise language exceptions that `try` can catch. This function is implemented entirely in SFL without host signals. It converts byte values, not Unicode code points.
+`import "str"` provides `str.chr(code)`, implemented entirely in SFL without host signals. For integers from 0 through 255 it returns a one-byte string: `str.chr(65)` returns `"A"`, and `str.chr(0)` returns `"\x00"`. Larger non-negative integers are encoded as multiple bytes in little-endian order. It operates on byte values, not Unicode code points.
+
+`str.ord(value)` emits the `"str.ord"` signal and returns the integer value of exactly one byte, from 0 through 255. For example, `str.ord("A")` returns `65`, `str.ord("0")` returns `48`, and `str.ord("\xFF")` returns `255`. Non-strings raise `TYPE_ERROR`; empty or multi-byte strings raise `INVALID_LENGTH`. These are language errors that `try ... except ... then ...` can handle. A non-ASCII Unicode character encoded as multiple UTF-8 bytes is not a single byte. The default signal handler includes this signal. Custom configurations can include `StrSignalHandler()` in their handler list, register the signal explicitly, or derive from `StandardSignalHandler`. Restricted `eval` calls need `with_signal "str.ord"` to permit it.
 
 `import "name"` searches directories supplied with `-I`, then `SFL_PATH` (separated by the platform's path-list separator), then the bundled standard library. `local "name"` searches only beside the current source file. A missing `.sfl` suffix is added automatically. Both forms support `as alias`. Circular imports raise `IMPORT_CYCLE`.
 
@@ -107,12 +109,77 @@ Only compilation results are cached. Every `run` executes the main module again,
 - Blocks do not implicitly return their final expression. A block without an executed `return` returns null. A module returns its export dictionary.
 - `obj[key]` returns null for a missing key; `obj.key` raises an exception. String indexing uses non-negative integer keys and returns one-byte strings. Numerically equivalent floating-point keys work too; negative indices do not wrap around.
 - Byte strings support persistent updates with `text[index := value]`, returning a new string without changing the original. Update indices must be integers; values must be integer bytes or null. See the rules below.
-- The brackets in `[]` must be adjacent. Dictionary update entries may be separated by newlines or commas. Function parameters and arguments use commas, with trailing commas allowed.
+- The brackets in `[]` must be adjacent. Dictionary update entries may be separated by newlines or commas. Function parameters and arguments use commas, with trailing commas allowed. A final `...` parameter permits additional arguments; `args` exposes all arguments inside the function body.
 - Precedence, from highest to lowest, is postfix, prefix, multiplication/division/remainder, addition/subtraction, and comparison. Arithmetic is left-associative. Comparison chains require explicit parentheses rather than Python-style chaining.
 - Ordinary newlines separate statements. Parentheses and call arguments allow line continuation, while embedded brace-delimited bodies retain their own statement boundaries.
 - `eval` parses one expression, which may be a block or `do` expression containing statements. Its default environment and signal allowlist are empty. Use parentheses to clarify the boundaries of complex `eval` and `emit` operands.
 - `repr` produces an expression that SFL `eval` can read, including closure captures and null bindings. NaN is represented as `(inf - inf)`. Reconstructed functions preserve call behavior, not object identity.
-- `try` catches language exception dictionaries containing `code`, `message`, and, when available, `source`, `line`, and `column`. Internal return signals and unexpected host failures are not caught as language exceptions.
+- `try ... except name then ...` catches values thrown by `raise` and built-in language errors. Built-in errors are dictionaries containing `code`, `message`, and, when available, `source`, `line`, and `column`. Internal return signals and unexpected host failures are not caught as language exceptions.
+
+### Function Arguments
+
+Inside a function body, `args` returns a persistent dictionary of that call's actual arguments, indexed from zero. It includes arguments bound to named parameters as well as any additional arguments. Both `args.0` and `args[0]` access the first argument. This works in fixed-arity functions too.
+
+```sfl
+collect := fn (...) with [] {
+    return args
+}
+
+add := fn (left, ...) with [] {
+    return left + args[1]
+}
+
+export collect(10, "hello", 30) as collected
+export collect() as empty
+export add(10, 20) as sum
+```
+
+Here `collected` is `[][0 := 10, 1 := "hello", 2 := 30]`, `empty` is `[]`, and `sum` is `30`.
+
+- `fn (...)` accepts zero or more arguments. `fn (first, ...)` requires at least one argument; `fn (first, second, ...)` requires at least two. Named parameters bind the corresponding leading arguments.
+- Without `...`, the argument count must match the parameter count exactly. A count mismatch raises the catchable language error `ARGUMENT_COUNT`.
+- `...` can appear once, as the final item in a parameter list, with an optional trailing comma. It is neither a named parameter nor a call-site spread operator. Forms such as `fn (..., last)` and `fn (..., ...)` are syntax errors.
+- Each call has its own argument dictionary. Rebinding a named parameter or updating a dictionary derived from `args` leaves the original arguments unchanged. Nested blocks and exception handlers retain the current call's arguments; nested functions use their own arguments. Returned or explicitly captured argument dictionaries remain usable after the call returns.
+
+`args` follows the ordinary dictionary rules: null argument values have no stored entry, but later arguments retain their original indices. For example, `collect(null, 7)` returns `[][1 := 7]`. `args[0]` then returns null, while `args.0` raises `MISSING_MEMBER`. Accordingly, `len args` counts stored, non-null arguments.
+
+`args` is a reserved keyword and is valid only within a lexically enclosing function body, including its nested blocks. Using it at module scope or in a top-level function's `with` expression is rejected with `INVALID_ARGS`. A nested function's `with` expression can use its enclosing function's `args`. An `eval` string has its own lexical scope: pass an argument dictionary under another name through `with` to access it there, or define a function inside the evaluated expression.
+
+Serialized ASTs store `args` as an `ARGS` node whose `function` reference points to the nearest enclosing function. `FUNCTION` nodes record `variadic=YES` or `variadic=NO`, with `params` listing only named parameters. Source rendering and `repr` preserve variadic signatures. Existing compilation caches rebuild automatically when the updated compiler first reads them.
+
+### Function Representation
+
+Function `repr` results use two spaces for each unmatched opening `(`, `[`, or `{` at the start of a line. Leading closing brackets reduce the indentation before that line is written. Brackets inside string literals do not affect indentation. Nested function values inside dictionaries and captured environments follow the same rule.
+
+Every function defined by a function's representation has an explicit `with` environment, including nested function literals and captured function values. A function without dependencies uses `with ([])`. For example, a function capturing `offset := 10` can be represented as:
+
+```sfl
+(fn (value) with (([])[
+      "offset" := 10
+  ]) {
+    return (value + offset)
+})
+```
+
+The environments preserve definition-time snapshots rather than relying on names in the caller of `eval`. Null captures use non-null holder dictionaries and are restored inside the function body, preserving the distinction between a null binding and an undefined name. Generated environments for nested implicit closures also preserve null parameters and local bindings. Explicit environment expressions are evaluated once, including when a nested closure needs to inherit their dynamically determined names. Variadic signatures, `args`, and `self` retain their behavior after reconstruction.
+
+### Raising and Catching Values
+
+`raise value` evaluates its operand once, then throws that exact SFL value. Integers, floats, byte strings, dictionaries, functions, and null are all supported. The handler receives the original value, without wrapping or conversion; dictionary and function identity are preserved.
+
+```sfl
+result := try {
+    raise "bad input"
+} except error then {
+    return error
+}
+```
+
+Here `result` is `"bad input"`. An `except` handler requires a binding name followed by `then` and a handler block. It catches explicit raises and built-in language errors. A handler can throw again with `raise error`, or throw a different value; the nearest enclosing active handler catches it.
+
+`raise` consumes the following expression, so `raise 1 + 2` throws `3`. It also works in expression positions such as `return raise "failed"`. An error while evaluating the operand propagates normally. Statements after an executed raise are skipped, and exceptions propagate through functions, `eval`, and imports. A normal `return` is not caught by `except`.
+
+An uncaught raise exits the CLI with status 1 and reports `RAISED_VALUE`, its source location, and the value's SFL representation. Python callers receive `sfl.runtime.RaisedValue`; its `.value` property contains the original thrown value. `raise` is a reserved keyword. Serialized ASTs store raises as `RAISE` nodes with a `value` expression; handlers use the existing `TRY` node.
 
 ### Reserved Names
 
@@ -121,6 +188,7 @@ Keywords cannot be used as variable names, function parameters, exception bindin
 | Statement | Result |
 | --- | --- |
 | `type := 1` | `RESERVED_NAME` |
+| `args := 1` | `RESERVED_NAME` |
 | `if := 1` | `RESERVED_NAME` |
 | `import "stdio" as return` | `RESERVED_NAME` |
 | `local "helper.sfl" as type` | `RESERVED_NAME` |
@@ -174,12 +242,13 @@ The interpreter does not sandbox resource usage or file access for untrusted pro
 ## Python API and Signal Extensions
 
 ```python
-from sfl import SignalHandler, StdioSignalHandler, compile_source, run_source
+from sfl import SignalHandler, StdioSignalHandler, StrSignalHandler, compile_source, run_source
+from sfl.runtime import Interpreter
 
 document = compile_source("demo.sfl")
 
 
-class MySignals(StdioSignalHandler):
+class MySignals(SignalHandler):
     def __init__(self):
         super().__init__()
         self.calls = []
@@ -190,21 +259,31 @@ class MySignals(StdioSignalHandler):
         return value
 
 
-signals = MySignals()
+custom = MySignals()
+signals = [StdioSignalHandler(), StrSignalHandler(), custom]
 exports = run_source("demo.sfl", signals=signals)
+interpreter = Interpreter(signals=signals)
+exports = interpreter.run("demo.sfl")
 ```
 
 `SignalHandler` manages signal registration and dispatch, starting with an empty registry:
 
 - `register(name, handler)` registers or replaces a handler. Names must be bytes, and handlers must be callable.
 - `unregister(name)` removes a registration and does nothing if the name is absent.
+- `supports(name)` reports whether the handler recognizes a signal name, independently of its return value.
 - `handle(name, value)` dispatches a signal, returning null (Python `None`) if it is not registered.
 
-`StdioSignalHandler` subclasses `SignalHandler` and binds `stdio.print`, `stdio.write`, and `stdio.readline` to its instance methods `print`, `write`, and `readline`. Subclass it to retain standard I/O while adding signals or overriding those methods. Subclass `SignalHandler` to start with an empty registry. Handler instances can retain state and are passed to the interpreter without being copied.
+`StdioSignalHandler` subclasses `SignalHandler` and binds `stdio.print`, `stdio.write`, and `stdio.readline` to its instance methods `print`, `write`, and `readline`. `StrSignalHandler` is a separate `SignalHandler` subclass that binds `str.ord` to its `ord` method. `StandardSignalHandler` combines them through `CompositeSignalHandler`, exposing the instances as `.stdio` and `.strings`. Subclass `StandardSignalHandler` to retain all bundled signals, or `SignalHandler` to start with an empty registry.
 
-`signals=None` creates a default `StdioSignalHandler`. Both `run_source` and `Interpreter` also accept the original dictionary form, such as `signals={b"custom": lambda value: value}`. A dictionary is copied into a new `SignalHandler` and replaces the entire registry; standard I/O is not added automatically. Pass `SignalHandler()` to disable all default signals.
+Both `Interpreter` and `run_source` accept a single handler or an iterable of handlers through `signals=`, including lists, tuples, and generators. An iterable is consumed once into a `CompositeSignalHandler`; its members must be `SignalHandler` instances. The original instances are retained, including their state, and later calls to their `register` and `unregister` methods affect subsequent dispatches. When several handlers support the same name, the last one supplied wins. Returning null still counts as handling the signal: it does not trigger fallback to earlier handlers. Subclasses implementing dynamic dispatch should override both `supports` and `handle`.
+
+`CompositeSignalHandler(handlers)` is also available from `sfl` for explicit or nested composition. Registrations on the composite itself take precedence over its members. Removing such a registration reveals the member handler again.
+
+`signals=None` creates a default `StandardSignalHandler`. Pass `StdioSignalHandler()` for only standard I/O or `StrSignalHandler()` for only string signals. Both entry points also accept the original mapping form, such as `signals={b"custom": lambda value: value}`. A mapping is copied into a new `SignalHandler`. Custom lists, handlers, and mappings replace the defaults; bundled signals are not added automatically. Pass `signals=[]`, `signals={}`, or `SignalHandler()` to disable all default signals.
 
 Handlers receive one SFL value and return one SFL value: `None`, int, float, bytes, `Dictionary`, or `Function`. The interpreter checks eval signal permissions before dispatch and validates the returned value afterward. Denied signals never reach the handler, and `with_signal` cannot expand an outer context's permissions. Permitted but unregistered signals return null.
+
+A handler may raise `sfl.model.SflError` for an expected language error. The interpreter converts it into a catchable runtime error and attaches the emitting expression's source location. Existing runtime errors and explicitly raised values propagate unchanged; unexpected host failures are not converted.
 
 ## Project Layout
 

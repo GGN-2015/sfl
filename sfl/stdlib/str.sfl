@@ -10,3 +10,8 @@ export fn (code) with [] {
         return self(code % 256) + self(code // 256)
     }
 } as chr
+
+ord := fn (s) with [] {
+    return emit s as "str.ord"
+}
+export ord

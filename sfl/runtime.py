@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,7 @@ from .lexer import IDENTIFIER, KEYWORDS, lex
 from .model import AstDocument, Node, SflError, SourceInfo
 from .parser import parse
 from .render import representation
-from .signals import SignalHandler, StdioSignalHandler
+from .signals import CompositeSignalHandler, SignalHandler, StandardSignalHandler
 from .values import Dictionary, Function, canonical_key, equal, parse_integer
 
 
@@ -26,6 +26,19 @@ class RuntimeError(SflError):
         if self.span:
             result = result.with_item(b"line", self.span.start.line).with_item(b"column", self.span.start.column)
         return result
+
+
+class RaisedValue(RuntimeError):
+    def __init__(self, value, span=None, source=None):
+        super().__init__("RAISED_VALUE", "Uncaught raised value", span, source)
+        self.payload = value
+
+    @property
+    def value(self) -> Any:
+        return self.payload
+
+    def __str__(self) -> str:
+        return super().__str__() + ": " + representation(self.value).decode("ascii")
 
 
 class ReturnSignal(BaseException):
@@ -42,6 +55,7 @@ class Context:
     function: Function | None = None
     allowed: frozenset[bytes] | None = None
     exports: Dictionary = field(default_factory=Dictionary)
+    arguments: Dictionary = field(default_factory=Dictionary)
 
 
 def valid_value(value) -> bool:
@@ -49,17 +63,19 @@ def valid_value(value) -> bool:
 
 
 class Interpreter:
-    def __init__(self, compiler=None, signals: SignalHandler | Mapping[bytes, Callable[[Any], Any]] | None = None, library_paths=()):
+    def __init__(self, compiler=None, signals: SignalHandler | Iterable[SignalHandler] | Mapping[bytes, Callable[[Any], Any]] | None = None, library_paths=()):
         if compiler is None:
             from .cache import Compiler
             compiler = Compiler()
         self.compiler = compiler
         if signals is None:
-            self.signals: SignalHandler = StdioSignalHandler()
+            self.signals: SignalHandler = StandardSignalHandler()
         elif isinstance(signals, SignalHandler):
             self.signals = signals
-        else:
+        elif isinstance(signals, Mapping):
             self.signals = SignalHandler(signals)
+        else:
+            self.signals = CompositeSignalHandler(signals)
         self.library_paths = [Path(path).resolve() for path in library_paths]
         self.library_paths.extend(Path(path).resolve() for path in os.environ.get("SFL_PATH", "").split(os.pathsep) if path)
         self.library_paths.append(Path(__file__).parent / "stdlib")
@@ -119,7 +135,7 @@ class Interpreter:
                 self.evaluate(statement, context)
             return context.exports
         if kind == "BLOCK":
-            inner = Context(context.document, context.origin, dict(context.environment), context.function, context.allowed)
+            inner = Context(context.document, context.origin, dict(context.environment), context.function, context.allowed, arguments=context.arguments)
             try:
                 for statement in fields["body"]:
                     self.evaluate(statement, inner)
@@ -196,21 +212,26 @@ class Interpreter:
             if fields["environment"] is not None:
                 captured = self.environment(self.evaluate(fields["environment"], context), node, context)
             return Function(node, captured, context.document, context.origin)
-        if kind == "SELF":
+        if kind in {"SELF", "ARGS"}:
             if context.function is None or context.function.node is not fields["function"]:
-                self.fail("INVALID_SELF", "self does not belong to this function", node, context)
-            return context.function
+                self.fail("INVALID_" + kind, kind.lower() + " does not belong to this function", node, context)
+            return context.function if kind == "SELF" else context.arguments
         if kind == "CALL":
             function = self.evaluate(fields["callee"], context)
             args = [self.evaluate(argument, context) for argument in fields["args"]]
             if not isinstance(function, Function):
                 self.fail("TYPE_ERROR", "Call target is not a function", node, context)
             params = function.node.fields["params"]
-            if len(params) != len(args):
-                self.fail("ARGUMENT_COUNT", f"Expected {len(params)} arguments, got {len(args)}", node, context)
+            variadic = function.node.fields["variadic"] == "YES"
+            if len(args) < len(params) or (not variadic and len(args) > len(params)):
+                expected = "at least " + str(len(params)) if variadic else str(len(params))
+                self.fail("ARGUMENT_COUNT", f"Expected {expected} arguments, got {len(args)}", node, context)
             environment = dict(function.environment)
             environment.update((param.fields["name"], value) for param, value in zip(params, args))
-            return self.evaluate(function.node.fields["body"], Context(function.document, function.origin, environment, function, context.allowed))
+            arguments = Dictionary()
+            for position, value in enumerate(args):
+                arguments = arguments.with_item(position, value)
+            return self.evaluate(function.node.fields["body"], Context(function.document, function.origin, environment, function, context.allowed, arguments=arguments))
         if kind == "IF":
             condition = self.evaluate(fields["condition"], context)
             if type(condition) is not int:
@@ -220,13 +241,19 @@ class Interpreter:
             return self.evaluate(fields["body"], context)
         if kind == "RETURN":
             raise ReturnSignal(fields["target"], self.evaluate(fields["value"], context))
+        if kind == "RAISE":
+            value = self.evaluate(fields["value"], context)
+            source = context.document.source.filename
+            if context.origin is not None and not source.startswith("<"):
+                source = str(context.origin)
+            raise RaisedValue(value, node.span, source)
         if kind == "TRY":
             try:
                 return self.evaluate(fields["body"], context)
             except RuntimeError as error:
                 environment = dict(context.environment)
                 environment[fields["error_name"]] = error.value
-                return self.evaluate(fields["handler"], Context(context.document, context.origin, environment, context.function, context.allowed))
+                return self.evaluate(fields["handler"], Context(context.document, context.origin, environment, context.function, context.allowed, arguments=context.arguments))
         if kind == "LENGTH":
             value = self.evaluate(fields["value"], context)
             if not isinstance(value, (Dictionary, bytes)):
@@ -269,7 +296,12 @@ class Interpreter:
                 self.fail("TYPE_ERROR", "Signal name must be a byte string", node, context)
             if context.allowed is not None and signal not in context.allowed:
                 return None
-            result = self.signals.handle(signal, value)
+            try:
+                result = self.signals.handle(signal, value)
+            except SflError as error:
+                if isinstance(error, RuntimeError):
+                    raise
+                self.fail(error.code, error.message, node, context)
             if not valid_value(result):
                 self.fail("SIGNAL_RESULT", "Signal handler returned a non-SFL value", node, context)
             return result
