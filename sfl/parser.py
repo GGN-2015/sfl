@@ -48,6 +48,9 @@ class Parser:
         return self.take() if self.peek().kind == kind else None
 
     def expect(self, kind: str) -> Token:
+        token = self.peek()
+        if kind == "IDENT" and token.kind.startswith("KW_"):
+            self.error("Reserved keyword cannot be used as a name: " + token.raw.decode("ascii"), token, "RESERVED_NAME")
         if self.peek().kind != kind:
             self.error(f"Expected {kind}, got {self.peek().kind}")
         return self.take()
@@ -88,6 +91,11 @@ class Parser:
     def statement(self) -> Node:
         first = self.peek()
         start = first.span.start
+        if (first.kind == "IDENT" or first.kind.startswith("KW_")) and self.tokens[self.position + 1].kind == "BIND":
+            name = self.expect("IDENT").raw
+            self.expect("BIND")
+            value = self.expression()
+            return self.node("BINDING", start, name=name, value=value)
         if first.kind in {"KW_IMPORT", "KW_LOCAL"}:
             self.take()
             path = self.expect("STRING")
@@ -119,11 +127,6 @@ class Parser:
             elif value.kind != "NAME":
                 self.error("An expression export needs an explicit alias", first)
             return self.node("EXPORT", start, value=value, alias_kind=alias_kind, alias=alias)
-        if first.kind == "IDENT" and self.tokens[self.position + 1].kind == "BIND":
-            self.take()
-            self.take()
-            value = self.expression()
-            return self.node("BINDING", start, name=first.raw, value=value)
         value = self.expression()
         return self.node("EXPR_STMT", start, value=value)
 
@@ -165,12 +168,12 @@ class Parser:
         elif first.kind == "LBRACE":
             self.position -= 1
             left = self.block()
-        elif first.kind in {"MINUS", "KW_LEN", "KW_REPR"}:
+        elif first.kind in {"MINUS", "KW_LEN", "KW_REPR", "KW_TYPE"}:
             operand = self.expression(40)
             if first.kind == "MINUS":
                 left = self.node("UNARY", start, op="NEG", operand=operand)
             else:
-                left = self.node("LENGTH" if first.kind == "KW_LEN" else "REPR", start, value=operand)
+                left = self.node({"KW_LEN": "LENGTH", "KW_REPR": "REPR", "KW_TYPE": "TYPE"}[first.kind], start, value=operand)
         elif first.kind == "KW_FN":
             left = self.function(first)
         elif first.kind == "KW_IF":

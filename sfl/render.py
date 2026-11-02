@@ -53,8 +53,8 @@ def source(node: Node) -> str:
         return "(do " + source(fields["body"]) + ")"
     if kind == "TRY":
         return "(try " + source(fields["body"]) + " except " + fields["error_name"].decode("ascii") + " then " + source(fields["handler"]) + ")"
-    if kind in {"LENGTH", "REPR"}:
-        return "(" + ("len" if kind == "LENGTH" else "repr") + " (" + source(fields["value"]) + "))"
+    if kind in {"LENGTH", "REPR", "TYPE"}:
+        return "(" + {"LENGTH": "len", "REPR": "repr", "TYPE": "type"}[kind] + " (" + source(fields["value"]) + "))"
     if kind == "EVAL":
         environment = " with (" + source(fields["environment"]) + ")" if fields["environment"] else ""
         signals = "".join(" with_signal (" + source(signal) + ")" for signal in fields["signals"])

@@ -108,7 +108,7 @@ class AstDocument:
     content_hash: str = ""
 
 
-EXPRESSION_KINDS = frozenset("NAME INT FLOAT STRING INF NULL EMPTY_DICT BLOCK UNARY BINARY DICT_UPDATE INDEX MEMBER CALL FUNCTION SELF IF DO TRY LENGTH REPR EVAL EMIT ERROR_EXPR".split())
+EXPRESSION_KINDS = frozenset("NAME INT FLOAT STRING INF NULL EMPTY_DICT BLOCK UNARY BINARY DICT_UPDATE INDEX MEMBER CALL FUNCTION SELF IF DO TRY LENGTH REPR TYPE EVAL EMIT ERROR_EXPR".split())
 STATEMENT_KINDS = frozenset("IMPORT BINDING EXPR_STMT RETURN EXPORT ERROR_STMT".split())
 SCHEMAS = {
     "MODULE": {"body": "statements"},
@@ -134,7 +134,7 @@ SCHEMAS = {
     "DO": {"body": "block"},
     "RETURN": {"value": "expression", "target": "block"},
     "TRY": {"body": "block", "error_name": "identifier", "handler": "block"},
-    "LENGTH": {"value": "expression"}, "REPR": {"value": "expression"},
+    "LENGTH": {"value": "expression"}, "REPR": {"value": "expression"}, "TYPE": {"value": "expression"},
     "EVAL": {"code": "expression", "environment": "optional_expression", "signals": "expressions"},
     "EMIT": {"value": "expression", "signal": "expression"},
     "IMPORT": {"mode": {"LIBRARY", "RELATIVE"}, "path": "bytes", "alias": "optional_identifier"},

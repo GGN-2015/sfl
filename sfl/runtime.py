@@ -234,6 +234,13 @@ class Interpreter:
             return len(value)
         if kind == "REPR":
             return representation(self.evaluate(fields["value"], context))
+        if kind == "TYPE":
+            value = self.evaluate(fields["value"], context)
+            if isinstance(value, Dictionary):
+                return b"dict"
+            if isinstance(value, Function):
+                return b"fn"
+            return {type(None): b"null", int: b"int", float: b"float", bytes: b"str"}[type(value)]
         if kind == "EVAL":
             code = self.evaluate(fields["code"], context)
             if not isinstance(code, bytes):

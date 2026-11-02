@@ -287,7 +287,9 @@ def validate_ast(unit: AstUnit):
             return value is None or check_value(value, expected[9:])
         if expected in {"bytes", "identifier", "integer", "float"}:
             pattern = {"identifier": IDENTIFIER, "integer": INTEGER, "float": FLOAT}.get(expected)
-            return isinstance(value, bytes) and (pattern is None or pattern.fullmatch(value) is not None)
+            if not isinstance(value, bytes) or (pattern is not None and pattern.fullmatch(value) is None):
+                return False
+            return expected != "identifier" or value.decode("ascii") not in KEYWORDS
         if expected in {"statements", "expressions", "entries", "params"}:
             singular = {"statements": "statement", "expressions": "expression", "entries": "entry", "params": "param"}[expected]
             return isinstance(value, list) and all(check_value(item, singular) for item in value)

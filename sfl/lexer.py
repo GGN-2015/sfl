@@ -5,7 +5,7 @@ import re
 from .model import LexDocument, LexUnit, Position, SourceInfo, Span, Token
 
 
-KEYWORDS = {word: "KW_" + word.upper() for word in "import local as fn with with_signal if then else do return len repr eval emit try except self null inf export".split()}
+KEYWORDS = {word: "KW_" + word.upper() for word in "import local as fn with with_signal if then else do return len repr type eval emit try except self null inf export".split()}
 PUNCTUATION = {
     b":=": "BIND", b"//": "FLOOR_DIV", b"<=": "LE", b">=": "GE", b"==": "EQ", b"!=": "NE",
     b"+": "PLUS", b"-": "MINUS", b"*": "STAR", b"/": "SLASH", b"%": "PERCENT",

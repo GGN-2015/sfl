@@ -114,6 +114,39 @@ Only compilation results are cached. Every `run` executes the main module again,
 - `repr` produces an expression that SFL `eval` can read, including closure captures and null bindings. NaN is represented as `(inf - inf)`. Reconstructed functions preserve call behavior, not object identity.
 - `try` catches language exception dictionaries containing `code`, `message`, and, when available, `source`, `line`, and `column`. Internal return signals and unexpected host failures are not caught as language exceptions.
 
+### Reserved Names
+
+Keywords cannot be used as variable names, function parameters, exception bindings, or explicit `import`/`local` aliases. These declarations raise `RESERVED_NAME` while building the AST, with the keyword and its source location in the diagnostic. Names are case-sensitive: `type` is reserved, while `Type` and `type_name` are valid identifiers.
+
+| Statement | Result |
+| --- | --- |
+| `type := 1` | `RESERVED_NAME` |
+| `if := 1` | `RESERVED_NAME` |
+| `import "stdio" as return` | `RESERVED_NAME` |
+| `local "helper.sfl" as type` | `RESERVED_NAME` |
+| `fn (type) {}` | `RESERVED_NAME` |
+| `local "type.sfl"` | `IMPORT_ERROR`: an explicit non-keyword alias is required |
+| `local "type.sfl" as module` | Valid binding named `module` |
+
+These are static errors: the entire source unit is rejected before any statements or imports execute. A `try` in that source cannot defer the check; a `try` can catch errors raised while compiling an `eval` string. Cached AST identifier fields are checked against the same keyword table. String keys such as `[]["type" := 1]` and string export names such as `export 1 as "type"` remain valid.
+
+### Type Inspection
+
+`type value` evaluates its operand once and returns its SFL type name as a byte string. It has the same prefix precedence as `len` and `repr`: indexing, member access, and calls bind more tightly, while arithmetic and comparisons bind less tightly. Use `type (a + b)` to inspect the result of an arithmetic expression. Undefined variables and other operand errors propagate normally.
+
+| Expression | Result |
+| --- | --- |
+| `type 42` | `"int"` |
+| `type 1.5` | `"float"` |
+| `type "hello"` | `"str"` |
+| `type []` | `"dict"` |
+| `type (fn () {})` | `"fn"` |
+| `type null` | `"null"` |
+| `type {}` | `"null"` |
+| `type inf` | `"float"` |
+
+Variables work the same way: after `a := 42`, `type a` returns `"int"`. Floating-point infinities and NaN have type `"float"`; comparisons have type `"int"`. `type` is a reserved keyword, so it cannot be used as a variable or parameter name. Importing `type.sfl` requires an explicit alias, such as `local "type.sfl" as module`.
+
 ### Byte-String Updates
 
 `text[index := value]` operates on byte positions, not Unicode characters:
