@@ -7,10 +7,12 @@ from .formats import quote
 from .imports import resolve_import
 from .lexer import IDENTIFIER
 from .model import Node, children
+from .parser import OPERATORS
 from .values import Dictionary, Function, integer_text
 
 
 SYMBOLS = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/", "FLOOR_DIV": "//", "MOD": "%", "LT": "<", "GT": ">", "LE": "<=", "GE": ">=", "EQ": "==", "NE": "!="}
+BINARY_PRECEDENCE = {operator: power for power, operator in OPERATORS.values()}
 
 
 def indent(text: str) -> str:
@@ -51,7 +53,7 @@ def parameters(node: Node) -> str:
 
 
 def environment_update(base: str, entries: list[str]) -> str:
-    return "(" + base + ")[\n" + "\n".join(entries) + "\n]" if entries else base
+    return base + "[\n" + "\n".join(entries) + "\n]" if entries else base
 
 
 @dataclass
@@ -99,7 +101,7 @@ class SourceRenderer:
         signature = "fn (" + parameters(node) + ")"
         param_names = {parameter.fields["name"] for parameter in fields["params"]}
         if not self.explicit_environments:
-            environment = " with (" + self.render(fields["environment"], scope) + ")" if fields["environment"] else ""
+            environment = " with " + self.render(fields["environment"], scope) if fields["environment"] else ""
             return signature + environment + " " + self.block(fields["body"], Scope(scope.names | param_names))
         if fields["environment"] is None:
             captures = sorted(scope.names - param_names)
@@ -107,20 +109,35 @@ class SourceRenderer:
             prefix = [name.decode("ascii") + " := " + name.decode("ascii") + "[0]" for name in captures]
             environment = environment_update(scope.environment, entries)
             body = self.block(fields["body"], Scope(scope.names | param_names, scope.environment), prefix)
-            return signature + " with (" + environment + ") " + body
+            return signature + " with " + environment + " " + body
         environment = self.render(fields["environment"], scope)
         body_scope = Scope(param_names)
         if self.needs_environment(fields["body"]):
             name = self.fresh_name()
             identifier = name.decode("ascii")
-            forwarded = "(" + identifier + ")[" + quote(name) + " := " + identifier + "]"
+            forwarded = identifier + "[" + quote(name) + " := " + identifier + "]"
             body_scope.environment = forwarded
             body = self.block(fields["body"], body_scope)
-            return "(do {\n" + identifier + " := " + environment + "\nreturn " + signature + " with (" + forwarded + ") " + body + "\n})"
-        return signature + " with (" + environment + ") " + self.block(fields["body"], body_scope)
+            return "do {\n" + identifier + " := " + environment + "\nreturn " + signature + " with " + forwarded + " " + body + "\n}"
+        return signature + " with " + environment + " " + self.block(fields["body"], body_scope)
 
-    def render(self, node: Node, scope: Scope) -> str:
+    def render(self, node: Node, scope: Scope, minimum: int = 0, following: str = "") -> str:
         kind, fields = node.kind, node.fields
+        if kind in {"RAISE", "EVAL", "EMIT"}:
+            grouped = following in {"OPERATOR", "POSTFIX"}
+            if kind == "EVAL":
+                grouped |= following == "WITH_SIGNAL" or (following == "WITH" and fields["environment"] is None and not fields["signals"])
+        else:
+            power = 60
+            if kind == "BINARY":
+                power = BINARY_PRECEDENCE[fields["op"]]
+            elif kind in {"UNARY", "LENGTH", "REPR", "TYPE"}:
+                power = 40
+            elif kind in {"CALL", "INDEX", "MEMBER", "DICT_UPDATE"}:
+                power = 50
+            grouped = power < minimum
+        if grouped:
+            return "(" + self.render(node, scope) + ")"
         if kind in {"NAME", "PARAM"}:
             return fields["name"].decode("ascii")
         if kind in {"INT", "FLOAT"}:
@@ -142,39 +159,47 @@ class SourceRenderer:
         if kind == "RETURN":
             return "return " + self.render(fields["value"], scope)
         if kind == "RAISE":
-            return "(raise (" + self.render(fields["value"], scope) + "))"
+            return "raise " + self.render(fields["value"], scope, following=following)
         if kind == "UNARY":
-            return "(-(" + self.render(fields["operand"], scope) + "))"
+            return "-" + self.render(fields["operand"], scope, 40, following)
         if kind == "BINARY":
-            return "(" + self.render(fields["left"], scope) + " " + SYMBOLS[fields["op"]] + " " + self.render(fields["right"], scope) + ")"
+            power = BINARY_PRECEDENCE[fields["op"]]
+            left = self.render(fields["left"], scope, power + (power == 10), "OPERATOR")
+            right = self.render(fields["right"], scope, power + 1, following)
+            return left + " " + SYMBOLS[fields["op"]] + " " + right
         if kind == "ENTRY":
             return self.render(fields["key"], scope) + " := " + self.render(fields["value"], scope)
         if kind == "DICT_UPDATE":
-            return "(" + self.render(fields["base"], scope) + ")[" + ", ".join(self.render(entry, scope) for entry in fields["entries"]) + "]"
+            return self.render(fields["base"], scope, 50, "POSTFIX") + "[" + ", ".join(self.render(entry, scope) for entry in fields["entries"]) + "]"
         if kind == "INDEX":
-            return "(" + self.render(fields["base"], scope) + ")[" + self.render(fields["key"], scope) + "]"
+            return self.render(fields["base"], scope, 50, "POSTFIX") + "[" + self.render(fields["key"], scope) + "]"
         if kind == "MEMBER":
-            return "(" + self.render(fields["base"], scope) + ")." + fields["key"].decode("ascii")
+            base = self.render(fields["base"], scope, 50, "POSTFIX")
+            if fields["base"].kind == "INT" and fields["key"].isdigit():
+                base = "(" + base + ")"
+            return base + "." + fields["key"].decode("ascii")
         if kind == "CALL":
-            return "(" + self.render(fields["callee"], scope) + ")(" + ", ".join(self.render(argument, scope) for argument in fields["args"]) + ")"
+            return self.render(fields["callee"], scope, 50, "POSTFIX") + "(" + ", ".join(self.render(argument, scope) for argument in fields["args"]) + ")"
         if kind == "FUNCTION":
             return self.function(node, scope)
         if kind == "IF":
-            return "(if (" + self.render(fields["condition"], scope) + ") then " + self.render(fields["then"], scope) + " else " + self.render(fields["else"], scope) + ")"
+            return "if " + self.render(fields["condition"], scope) + " then " + self.render(fields["then"], scope) + " else " + self.render(fields["else"], scope)
         if kind == "DO":
-            return "(do " + self.render(fields["body"], scope) + ")"
+            return "do " + self.render(fields["body"], scope)
         if kind == "TRY":
             handler_scope = scope.copy()
             handler_scope.names.add(fields["error_name"])
-            return "(try " + self.render(fields["body"], scope) + " except " + fields["error_name"].decode("ascii") + " then " + self.render(fields["handler"], handler_scope) + ")"
+            return "try " + self.render(fields["body"], scope) + " except " + fields["error_name"].decode("ascii") + " then " + self.render(fields["handler"], handler_scope)
         if kind in {"LENGTH", "REPR", "TYPE"}:
-            return "(" + {"LENGTH": "len", "REPR": "repr", "TYPE": "type"}[kind] + " (" + self.render(fields["value"], scope) + "))"
+            return {"LENGTH": "len", "REPR": "repr", "TYPE": "type"}[kind] + " " + self.render(fields["value"], scope, 40, following)
         if kind == "EVAL":
-            environment = " with (" + self.render(fields["environment"], scope) + ")" if fields["environment"] else ""
-            signals = "".join(" with_signal (" + self.render(signal, scope) + ")" for signal in fields["signals"])
-            return "(eval (" + self.render(fields["code"], scope) + ")" + environment + signals + ")"
+            code_following = "WITH" if fields["environment"] else "WITH_SIGNAL" if fields["signals"] else following
+            code = self.render(fields["code"], scope, following=code_following)
+            environment = " with " + self.render(fields["environment"], scope, following="WITH_SIGNAL" if fields["signals"] else following) if fields["environment"] else ""
+            signals = "".join(" with_signal " + self.render(signal, scope, following="WITH_SIGNAL" if position + 1 < len(fields["signals"]) else following) for position, signal in enumerate(fields["signals"]))
+            return "eval " + code + environment + signals
         if kind == "EMIT":
-            return "(emit (" + self.render(fields["value"], scope) + ") as (" + self.render(fields["signal"], scope) + "))"
+            return "emit " + self.render(fields["value"], scope) + " as " + self.render(fields["signal"], scope, following=following)
         if kind == "IMPORT":
             _, name = resolve_import(fields["path"], fields["alias"])
             scope.names.add(name)
@@ -198,7 +223,7 @@ def represent(value) -> str:
     if type(value) is int:
         return integer_text(value).decode("ascii")
     if type(value) is float:
-        return "(inf - inf)" if math.isnan(value) else repr(value)
+        return "inf - inf" if math.isnan(value) else repr(value)
     if isinstance(value, bytes):
         return quote(value)
     if isinstance(value, Dictionary):
@@ -210,7 +235,7 @@ def represent(value) -> str:
         prefix = [name.decode("ascii") + " := " + name.decode("ascii") + "[0]" for name, item in sorted(captures.items()) if item is None]
         renderer = SourceRenderer(value.node, captures, explicit_environments=True)
         body = renderer.block(value.node.fields["body"], Scope(set(captures) | param_names), prefix)
-        return "(fn (" + parameters(value.node) + ") with (" + environment_update("[]", entries) + ") " + body + ")"
+        return "fn (" + parameters(value.node) + ") with " + environment_update("[]", entries) + " " + body
     raise ValueError("Value is not an SFL value")
 
 

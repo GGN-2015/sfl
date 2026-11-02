@@ -113,7 +113,7 @@ Only compilation results are cached. Every `run` executes the main module again,
 - Precedence, from highest to lowest, is postfix, prefix, multiplication/division/remainder, addition/subtraction, and comparison. Arithmetic is left-associative. Comparison chains require explicit parentheses rather than Python-style chaining.
 - Ordinary newlines separate statements. Parentheses and call arguments allow line continuation, while embedded brace-delimited bodies retain their own statement boundaries.
 - `eval` parses one expression, which may be a block or `do` expression containing statements. Its default environment and signal allowlist are empty. Use parentheses to clarify the boundaries of complex `eval` and `emit` operands.
-- `repr` produces an expression that SFL `eval` can read, including closure captures and null bindings. NaN is represented as `(inf - inf)`. Reconstructed functions preserve call behavior, not object identity.
+- `repr` produces an expression that SFL `eval` can read, including closure captures and null bindings. NaN is represented as `inf - inf`. Reconstructed functions preserve call behavior, not object identity.
 - `try ... except name then ...` catches values thrown by `raise` and built-in language errors. Built-in errors are dictionaries containing `code`, `message`, and, when available, `source`, `line`, and `column`. Internal return signals and unexpected host failures are not caught as language exceptions.
 
 ### Function Arguments
@@ -151,15 +151,17 @@ Serialized ASTs store `args` as an `ARGS` node whose `function` reference points
 
 Function `repr` results use two spaces for each unmatched opening `(`, `[`, or `{` at the start of a line. Leading closing brackets reduce the indentation before that line is written. Brackets inside string literals do not affect indentation. Nested function values inside dictionaries and captured environments follow the same rule.
 
-Every function defined by a function's representation has an explicit `with` environment, including nested function literals and captured function values. A function without dependencies uses `with ([])`. For example, a function capturing `offset := 10` can be represented as:
+Every function defined by a function's representation has an explicit `with` environment, including nested function literals and captured function values. A function without dependencies uses `with []`. For example, a function capturing `offset := 10` can be represented as:
 
 ```sfl
-(fn (value) with (([])[
-      "offset" := 10
-  ]) {
-    return (value + offset)
-})
+fn (value) with [][
+  "offset" := 10
+] {
+  return value + offset
+}
 ```
+
+Parentheses are emitted only where parsing requires them: for precedence, the original association of operations, nested comparisons, greedy keyword expressions, and ambiguous numeric member access. For example, `a + b * c` needs no grouping, while `(a + b) * c` and `a - (b - c)` retain it. Right-nested operations such as `a + (b + c)` also retain their parentheses so that floating-point rounding and evaluation order do not change. Calls, member access, and indexing render directly as `function(value).key[0]`.
 
 The environments preserve definition-time snapshots rather than relying on names in the caller of `eval`. Null captures use non-null holder dictionaries and are restored inside the function body, preserving the distinction between a null binding and an undefined name. Generated environments for nested implicit closures also preserve null parameters and local bindings. Explicit environment expressions are evaluated once, including when a nested closure needs to inherit their dynamically determined names. Variadic signatures, `args`, and `self` retain their behavior after reconstruction.
 
