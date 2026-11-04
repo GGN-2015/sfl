@@ -1,0 +1,21 @@
+import "stdio"
+
+raw_fib := fn (mem, pos) with [] {
+  return if mem[pos] != {} then {
+    return mem
+  } else {
+    return if pos <= 1 then {
+      return mem[pos := 1]
+    } else {
+      mem := self(mem, pos - 2)
+      mem := self(mem, pos - 1)
+      return mem[pos := mem[pos - 1] + mem[pos - 2]]
+    }
+  }
+}
+
+fib := fn (index) with []["raw_fib" := raw_fib] {
+  return raw_fib([], index)[index]
+}
+
+stdio.print("fib(9) = " + repr fib(9))

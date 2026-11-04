@@ -1,0 +1,11 @@
+import "math"
+import "stdio" as io
+
+# output the factorial of 10
+io.print("math.fact(10) := " + (repr math.fact(10)))
+
+# output the factorial function
+io.print("math.fact := " + (repr math.fact))
+
+# output the print function
+io.print("io.print := " + (repr io.print))

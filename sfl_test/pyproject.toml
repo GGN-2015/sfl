@@ -1,0 +1,20 @@
+[project]
+name = "sfl-test"
+version = "0.1.0"
+description = "Independent regression tests for sfl-lang"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["sfl-lang"]
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+sfl-lang = { path = "..", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers", "-ra"]

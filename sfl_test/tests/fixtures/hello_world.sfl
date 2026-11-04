@@ -1,0 +1,7 @@
+import "stdio"
+
+stdio.print("hello world!")
+stdio.write("please input your name: ")
+content := stdio.readline()
+content := content[len content - 1 := {}]
+stdio.print("hello, " + content + "!")

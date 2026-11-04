@@ -1,12 +1,14 @@
-import "stdio"
+import "stdio" as io
 
-n := 9
+io.write("input n: ")
+n := eval io.readline()
 
+# O(n) algorithm to solve fibonacci array
 _raw_fib := fn (mem, pos) with [] {
     return if (mem[pos] != {}) then {
         return mem
     } else {
-        return if (pos <= 1) then {
+        return if (pos <= 2) then {
             mem := mem[pos := 1]
             return mem
         }else {
@@ -18,10 +20,12 @@ _raw_fib := fn (mem, pos) with [] {
     }
 }
 
+# calculate interface
 fib := fn (idx) with [][
     "_raw_fib" := _raw_fib
 ] {
     return _raw_fib([], idx)[idx]
 }
 
-stdio.print("fib(" + repr(n) + ") = " + repr(fib(n)))
+io.print("fib(" + repr(n) + ") = " + repr(fib(n)))
+io.print(repr(fib))

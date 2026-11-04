@@ -287,6 +287,18 @@ Handlers receive one SFL value and return one SFL value: `None`, int, float, byt
 
 A handler may raise `sfl.model.SflError` for an expected language error. The interpreter converts it into a catchable runtime error and attaches the emitting expression's source location. Existing runtime errors and explicitly raised values propagate unchanged; unexpected host failures are not converted.
 
+## Tests
+
+`sfl_test/` is an independent uv project that depends on `sfl-lang` through an editable path source. It has its own dependency lock and virtual environment; the interpreter's runtime dependencies remain unchanged.
+
+```powershell
+cd sfl_test
+uv sync --locked
+uv run --locked pytest
+```
+
+The suite covers rendering, function reconstruction, language semantics, signals, standard libraries, serialization, caches, and the CLI. Sources and caches are created in temporary directories, and the examples under `sfl_test/tests/fixtures/` are independent of `sample_source/`. See `sfl_test/README.md` for focused test commands.
+
 ## Project Layout
 
 - `sfl/lexer.py`: byte-oriented tokenization.
@@ -299,3 +311,4 @@ A handler may raise `sfl.model.SflError` for an expected language error. The int
 - `sfl/signals.py`: extensible signal handler classes.
 - `sfl/render.py`: source rendering and value representations.
 - `sfl/stdlib/`: standard libraries written in SFL.
+- `sfl_test/`: standalone pytest project and test-owned SFL fixtures.

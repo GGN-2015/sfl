@@ -1,4 +1,7 @@
-export fn (code) with [] {
+import "logic"
+
+# convert an integer to a char by ASCII
+chr := fn (code) with [] {
     return if (code <= 255) then {
         return if code then {
             digits := "0123456789ABCDEF"
@@ -9,9 +12,68 @@ export fn (code) with [] {
     }else {
         return self(code % 256) + self(code // 256)
     }
-} as chr
+}
+export chr
 
 ord := fn (s) with [] {
     return emit s as "str.ord"
 }
 export ord
+
+isempty := fn (c) with [][
+    "chr" := chr
+    "or" := logic.or
+] {
+    return if (type c) == "str" then {
+        return or(c == " ", or(c == "\n", or(c == "\t", c == "\r")))
+    } else {
+        return if (type c) == "int" then {
+            return self(chr(c))
+        } else {
+            raise "isempty can only process int or str"
+        }
+    }
+}
+export isempty
+
+strip := fn (content) with [][
+    "isempty" := isempty
+] {
+    if (type content) != "str" then {
+        raise "argument type of strip should be str"
+    } else {}
+    return if content == "" then {
+        return ""
+    } else {
+        return if isempty(content.0) then {
+            return self(content[0 := {}])
+        } else {
+            length := (len content) - 1
+            return if isempty(content[length - 1]) then {
+                return self(content[length - 1 := {}])
+            } else {
+                return content
+            }
+        }
+    }
+}
+export strip
+
+# convert string to decimal integer
+int := fn (content) with [][
+    "strip" := strip
+] {
+    if (type content) != "str" then {
+        raise "argument type of int should be str"
+    } else {}
+    ans := try {
+        return eval(strip(content))
+    } except err then {
+        raise "error when processing integer"
+    }
+    if (type ans) != "int" then {
+        raise "result is not int"
+    } else {}
+    return ans
+}
+export int

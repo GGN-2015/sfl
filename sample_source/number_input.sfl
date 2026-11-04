@@ -1,0 +1,9 @@
+import "str"
+import "stdio" as io
+
+io.write("input a decimal number: ")
+
+# convert a decimal string to integer value
+a := str.int(io.readline())
+
+io.print("you input: " + repr(a))

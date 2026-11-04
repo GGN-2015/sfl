@@ -1,0 +1,6 @@
+export fn (a, b, c, ...) with [] {
+  amount := a + b * c
+  return fn () {
+    return amount - (b - c)
+  }
+} as make

@@ -1,0 +1,8 @@
+fact := fn (n) with [] {
+    return if (n <= 0) then {
+        return 1
+    } else {
+        return n * self(n - 1)
+    }
+}
+export fact
